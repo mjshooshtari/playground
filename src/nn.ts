@@ -188,6 +188,361 @@ export class Link {
   }
 }
 
+/** Type of layer supported by the network. */
+export enum LayerType {
+  DENSE = "dense",
+  CONV = "conv",
+  POOL = "pool"
+}
+
+/** Configuration for a convolutional layer. */
+export interface ConvLayerConfig {
+  type: LayerType.CONV;
+  kernelSize: number;
+  stride: number;
+  padding: number;
+  inDepth: number;
+  outDepth: number;
+  activation: ActivationFunction;
+}
+
+/** Configuration for a pooling layer. */
+export interface PoolLayerConfig {
+  type: LayerType.POOL;
+  size: number;
+  stride: number;
+  padding: number;
+  op: "max" | "avg";
+}
+
+/**
+ * A simple convolutional layer with weight sharing. The implementation here is
+ * intentionally minimal – it only supports 2D convolutions with square kernels
+ * and unit batch size which is sufficient for the playground environment.
+ */
+export class ConvolutionLayer {
+  type = LayerType.CONV;
+  kernelSize: number;
+  stride: number;
+  padding: number;
+  inDepth: number;
+  outDepth: number;
+  activation: ActivationFunction;
+  regularization: RegularizationFunction;
+
+  // Kernels indexed by [outDepth][inDepth][y][x]
+  kernels: number[][][][] = [];
+  biases: number[] = [];
+
+  // Gradients for each kernel weight and bias.
+  kernelGrads: number[][][][] = [];
+  biasGrads: number[] = [];
+  numAccumulatedDers = 0;
+
+  // Last input and output for backprop.
+  input: number[][][] = null;
+  output: number[][][] = null;
+  preActivation: number[][][] = null;
+
+  constructor(config: ConvLayerConfig, regularization: RegularizationFunction) {
+    this.kernelSize = config.kernelSize;
+    this.stride = config.stride || 1;
+    this.padding = config.padding || 0;
+    this.inDepth = config.inDepth;
+    this.outDepth = config.outDepth;
+    this.activation = config.activation;
+    this.regularization = regularization;
+
+    for (let d = 0; d < this.outDepth; d++) {
+      this.kernels[d] = [];
+      this.kernelGrads[d] = [];
+      for (let c = 0; c < this.inDepth; c++) {
+        this.kernels[d][c] = [];
+        this.kernelGrads[d][c] = [];
+        for (let i = 0; i < this.kernelSize; i++) {
+          this.kernels[d][c][i] = [];
+          this.kernelGrads[d][c][i] = [];
+          for (let j = 0; j < this.kernelSize; j++) {
+            this.kernels[d][c][i][j] = Math.random() - 0.5;
+            this.kernelGrads[d][c][i][j] = 0;
+          }
+        }
+      }
+      this.biases[d] = 0.1;
+      this.biasGrads[d] = 0;
+    }
+  }
+
+  forward(input: number[][][]): number[][][] {
+    this.input = input;
+    const inH = input.length;
+    const inW = input[0].length;
+    const inD = input[0][0].length;
+    const outH = Math.floor((inH - this.kernelSize + 2 * this.padding) /
+                                this.stride) + 1;
+    const outW = Math.floor((inW - this.kernelSize + 2 * this.padding) /
+                                this.stride) + 1;
+    this.output = zeros3D(outH, outW, this.outDepth);
+    this.preActivation = zeros3D(outH, outW, this.outDepth);
+    for (let y = 0; y < outH; y++) {
+      for (let x = 0; x < outW; x++) {
+        for (let od = 0; od < this.outDepth; od++) {
+          let sum = this.biases[od];
+          for (let id = 0; id < inD; id++) {
+            for (let ky = 0; ky < this.kernelSize; ky++) {
+              for (let kx = 0; kx < this.kernelSize; kx++) {
+                const inY = y * this.stride + ky - this.padding;
+                const inX = x * this.stride + kx - this.padding;
+                if (inY < 0 || inY >= inH || inX < 0 || inX >= inW) {
+                  continue;
+                }
+                sum += this.kernels[od][id][ky][kx] *
+                       input[inY][inX][id];
+              }
+            }
+          }
+          this.preActivation[y][x][od] = sum;
+          this.output[y][x][od] = this.activation.output(sum);
+        }
+      }
+    }
+    return this.output;
+  }
+
+  backward(grad: number[][][]): number[][][] {
+    const inH = this.input.length;
+    const inW = this.input[0].length;
+    const inD = this.input[0][0].length;
+    const outH = this.output.length;
+    const outW = this.output[0].length;
+    const gradInput = zeros3D(inH, inW, inD);
+    for (let y = 0; y < outH; y++) {
+      for (let x = 0; x < outW; x++) {
+        for (let od = 0; od < this.outDepth; od++) {
+          const chain = grad[y][x][od] *
+              this.activation.der(this.preActivation[y][x][od]);
+          this.biasGrads[od] += chain;
+          for (let id = 0; id < inD; id++) {
+            for (let ky = 0; ky < this.kernelSize; ky++) {
+              for (let kx = 0; kx < this.kernelSize; kx++) {
+                const inY = y * this.stride + ky - this.padding;
+                const inX = x * this.stride + kx - this.padding;
+                if (inY < 0 || inY >= inH || inX < 0 || inX >= inW) {
+                  continue;
+                }
+                this.kernelGrads[od][id][ky][kx] +=
+                    chain * this.input[inY][inX][id];
+                gradInput[inY][inX][id] +=
+                    chain * this.kernels[od][id][ky][kx];
+              }
+            }
+          }
+        }
+      }
+    }
+    this.numAccumulatedDers++;
+    return gradInput;
+  }
+
+  getOutputShape(): [number, number, number] {
+    return [this.output.length, this.output[0].length, this.outDepth];
+  }
+
+  updateWeights(learningRate: number, regularizationRate: number) {
+    if (this.numAccumulatedDers === 0) {
+      return;
+    }
+    for (let od = 0; od < this.outDepth; od++) {
+      // Update biases.
+      this.biases[od] -= learningRate *
+          this.biasGrads[od] / this.numAccumulatedDers;
+      this.biasGrads[od] = 0;
+      for (let id = 0; id < this.inDepth; id++) {
+        for (let ky = 0; ky < this.kernelSize; ky++) {
+          for (let kx = 0; kx < this.kernelSize; kx++) {
+            let grad = this.kernelGrads[od][id][ky][kx] /
+                this.numAccumulatedDers;
+            let w = this.kernels[od][id][ky][kx];
+            w -= learningRate * grad;
+            if (this.regularization) {
+              w -= learningRate * regularizationRate *
+                  this.regularization.der(this.kernels[od][id][ky][kx]);
+            }
+            this.kernels[od][id][ky][kx] = w;
+            this.kernelGrads[od][id][ky][kx] = 0;
+          }
+        }
+      }
+    }
+    this.numAccumulatedDers = 0;
+  }
+}
+
+/**
+ * A pooling layer supporting max and average pooling. The layer keeps track of
+ * the locations of maxima for backprop when operating in max mode.
+ */
+export class PoolLayer {
+  type = LayerType.POOL;
+  size: number;
+  stride: number;
+  padding: number;
+  op: "max" | "avg";
+
+  input: number[][][] = null;
+  output: number[][][] = null;
+  private maxPositions: {y: number, x: number}[][][] = null;
+
+  constructor(config: PoolLayerConfig) {
+    this.size = config.size;
+    this.stride = config.stride || config.size;
+    this.padding = config.padding || 0;
+    this.op = config.op;
+  }
+
+  forward(input: number[][][]): number[][][] {
+    this.input = input;
+    const inH = input.length;
+    const inW = input[0].length;
+    const depth = input[0][0].length;
+    const outH = Math.floor((inH - this.size + 2 * this.padding) /
+                                this.stride) + 1;
+    const outW = Math.floor((inW - this.size + 2 * this.padding) /
+                                this.stride) + 1;
+    this.output = zeros3D(outH, outW, depth);
+    if (this.op === "max") {
+      this.maxPositions = new Array(outH);
+      for (let y = 0; y < outH; y++) {
+        this.maxPositions[y] = new Array(outW);
+        for (let x = 0; x < outW; x++) {
+          this.maxPositions[y][x] = new Array(depth);
+        }
+      }
+    }
+    for (let d = 0; d < depth; d++) {
+      for (let y = 0; y < outH; y++) {
+        for (let x = 0; x < outW; x++) {
+          let best = this.op === "max" ? -Infinity : 0;
+          let count = 0;
+          let maxPos = {y: 0, x: 0};
+          for (let ky = 0; ky < this.size; ky++) {
+            for (let kx = 0; kx < this.size; kx++) {
+              const inY = y * this.stride + ky - this.padding;
+              const inX = x * this.stride + kx - this.padding;
+              if (inY < 0 || inY >= inH || inX < 0 || inX >= inW) {
+                continue;
+              }
+              const val = input[inY][inX][d];
+              if (this.op === "max") {
+                if (val > best) {
+                  best = val;
+                  maxPos = {y: inY, x: inX};
+                }
+              } else {
+                best += val;
+                count++;
+              }
+            }
+          }
+          if (this.op === "max") {
+            this.output[y][x][d] = best;
+            this.maxPositions[y][x][d] = maxPos;
+          } else {
+            this.output[y][x][d] = count === 0 ? 0 : best / count;
+          }
+        }
+      }
+    }
+    return this.output;
+  }
+
+  backward(grad: number[][][]): number[][][] {
+    const inH = this.input.length;
+    const inW = this.input[0].length;
+    const depth = this.input[0][0].length;
+    const outH = grad.length;
+    const outW = grad[0].length;
+    const gradInput = zeros3D(inH, inW, depth);
+    for (let d = 0; d < depth; d++) {
+      for (let y = 0; y < outH; y++) {
+        for (let x = 0; x < outW; x++) {
+          const g = grad[y][x][d];
+          if (this.op === "max") {
+            const pos = this.maxPositions[y][x][d];
+            if (pos) {
+              gradInput[pos.y][pos.x][d] += g;
+            }
+          } else {
+            for (let ky = 0; ky < this.size; ky++) {
+              for (let kx = 0; kx < this.size; kx++) {
+                const inY = y * this.stride + ky - this.padding;
+                const inX = x * this.stride + kx - this.padding;
+                if (inY < 0 || inY >= inH || inX < 0 || inX >= inW) {
+                  continue;
+                }
+                gradInput[inY][inX][d] +=
+                    g / (this.size * this.size);
+              }
+            }
+          }
+        }
+      }
+    }
+    return gradInput;
+  }
+
+  getOutputShape(): [number, number, number] {
+    return [this.output.length, this.output[0].length,
+      this.input[0][0].length];
+  }
+
+  updateWeights() {
+    // Pooling layers have no weights.
+  }
+}
+
+// Utility helpers ---------------------------------------------------------
+
+function zeros3D(h: number, w: number, d: number): number[][][] {
+  let res: number[][][] = new Array(h);
+  for (let y = 0; y < h; y++) {
+    res[y] = new Array(w);
+    for (let x = 0; x < w; x++) {
+      res[y][x] = [];
+      for (let z = 0; z < d; z++) {
+        res[y][x][z] = 0;
+      }
+    }
+  }
+  return res;
+}
+
+function flatten3D(t: number[][][]): number[] {
+  let res: number[] = [];
+  for (let y = 0; y < t.length; y++) {
+    for (let x = 0; x < t[0].length; x++) {
+      for (let d = 0; d < t[0][0].length; d++) {
+        res.push(t[y][x][d]);
+      }
+    }
+  }
+  return res;
+}
+
+function reshape1DTo3D(arr: number[], shape: [number, number, number]): number[][][] {
+  const [h, w, d] = shape;
+  const res = zeros3D(h, w, d);
+  let idx = 0;
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      for (let z = 0; z < d; z++) {
+        res[y][x][z] = arr[idx++];
+      }
+    }
+  }
+  return res;
+}
+
 /**
  * Builds a neural network.
  *
@@ -202,20 +557,40 @@ export class Link {
  * @param inputIds List of ids for the input nodes.
  */
 export function buildNetwork(
-    networkShape: number[], activation: ActivationFunction,
+    networkShape: Array<number | ConvLayerConfig | PoolLayerConfig>,
+    activation: ActivationFunction,
     outputActivation: ActivationFunction,
     regularization: RegularizationFunction,
-    inputIds: string[], initZero?: boolean): Node[][] {
+    inputIds: string[], initZero?: boolean): any[] {
+  // If the networkShape is specified as numbers we build a classic dense
+  // network. Otherwise we interpret the entries as layer configuration objects
+  // and build a network consisting of convolutional and/or pooling layers.
+  if (networkShape.length === 0) {
+    return [];
+  }
+  if (typeof networkShape[0] !== "number") {
+    let network: any[] = [];
+    for (let i = 0; i < networkShape.length; i++) {
+      let spec: any = networkShape[i];
+      if (spec.type === LayerType.CONV) {
+        network.push(new ConvolutionLayer(spec as ConvLayerConfig,
+            regularization));
+      } else if (spec.type === LayerType.POOL) {
+        network.push(new PoolLayer(spec as PoolLayerConfig));
+      }
+    }
+    return network;
+  }
+
   let numLayers = networkShape.length;
   let id = 1;
-  /** List of layers, with each layer being a list of nodes. */
   let network: Node[][] = [];
   for (let layerIdx = 0; layerIdx < numLayers; layerIdx++) {
     let isOutputLayer = layerIdx === numLayers - 1;
     let isInputLayer = layerIdx === 0;
     let currentLayer: Node[] = [];
     network.push(currentLayer);
-    let numNodes = networkShape[layerIdx];
+    let numNodes = networkShape[layerIdx] as number;
     for (let i = 0; i < numNodes; i++) {
       let nodeId = id.toString();
       if (isInputLayer) {
@@ -250,26 +625,45 @@ export function buildNetwork(
  *     nodes in the network.
  * @return The final output of the network.
  */
-export function forwardProp(network: Node[][], inputs: number[]): number {
-  let inputLayer = network[0];
-  if (inputs.length !== inputLayer.length) {
-    throw new Error("The number of inputs must match the number of nodes in" +
-        " the input layer");
+export function forwardProp(network: any[], inputs: any): number {
+  if (network.length === 0) {
+    return 0;
   }
-  // Update the input layer.
-  for (let i = 0; i < inputLayer.length; i++) {
-    let node = inputLayer[i];
-    node.output = inputs[i];
+
+  // Dense network path.
+  if (Array.isArray(network[0])) {
+    let denseNet = network as Node[][];
+    let inputLayer = denseNet[0];
+    if (inputs.length !== inputLayer.length) {
+      throw new Error("The number of inputs must match the number of nodes in" +
+          " the input layer");
+    }
+    // Update the input layer.
+    for (let i = 0; i < inputLayer.length; i++) {
+      let node = inputLayer[i];
+      node.output = inputs[i];
+    }
+    for (let layerIdx = 1; layerIdx < denseNet.length; layerIdx++) {
+      let currentLayer = denseNet[layerIdx];
+      for (let i = 0; i < currentLayer.length; i++) {
+        currentLayer[i].updateOutput();
+      }
+    }
+    return denseNet[denseNet.length - 1][0].output;
   }
-  for (let layerIdx = 1; layerIdx < network.length; layerIdx++) {
-    let currentLayer = network[layerIdx];
-    // Update all the nodes in this layer.
-    for (let i = 0; i < currentLayer.length; i++) {
-      let node = currentLayer[i];
-      node.updateOutput();
+
+  // Convolutional / pooling network path.
+  let activation = inputs;
+  for (let i = 0; i < network.length; i++) {
+    let layer = network[i];
+    if (layer instanceof ConvolutionLayer) {
+      activation = layer.forward(activation);
+    } else if (layer instanceof PoolLayer) {
+      activation = layer.forward(activation);
     }
   }
-  return network[network.length - 1][0].output;
+  // Assume the network outputs a single scalar value in a 1x1x1 tensor.
+  return activation[0][0][0];
 }
 
 /**
@@ -279,52 +673,62 @@ export function forwardProp(network: Node[][], inputs: number[]): number {
  * derivatives with respect to each node, and each weight
  * in the network.
  */
-export function backProp(network: Node[][], target: number,
+export function backProp(network: any[], target: number,
     errorFunc: ErrorFunction): void {
-  // The output node is a special case. We use the user-defined error
-  // function for the derivative.
-  let outputNode = network[network.length - 1][0];
-  outputNode.outputDer = errorFunc.der(outputNode.output, target);
+  if (network.length === 0) {
+    return;
+  }
 
-  // Go through the layers backwards.
-  for (let layerIdx = network.length - 1; layerIdx >= 1; layerIdx--) {
-    let currentLayer = network[layerIdx];
-    // Compute the error derivative of each node with respect to:
-    // 1) its total input
-    // 2) each of its input weights.
-    for (let i = 0; i < currentLayer.length; i++) {
-      let node = currentLayer[i];
-      node.inputDer = node.outputDer * node.activation.der(node.totalInput);
-      node.accInputDer += node.inputDer;
-      node.numAccumulatedDers++;
-    }
+  // Dense network path.
+  if (Array.isArray(network[0])) {
+    let denseNet = network as Node[][];
+    let outputNode = denseNet[denseNet.length - 1][0];
+    outputNode.outputDer = errorFunc.der(outputNode.output, target);
 
-    // Error derivative with respect to each weight coming into the node.
-    for (let i = 0; i < currentLayer.length; i++) {
-      let node = currentLayer[i];
-      for (let j = 0; j < node.inputLinks.length; j++) {
-        let link = node.inputLinks[j];
-        if (link.isDead) {
-          continue;
+    for (let layerIdx = denseNet.length - 1; layerIdx >= 1; layerIdx--) {
+      let currentLayer = denseNet[layerIdx];
+      for (let i = 0; i < currentLayer.length; i++) {
+        let node = currentLayer[i];
+        node.inputDer = node.outputDer * node.activation.der(node.totalInput);
+        node.accInputDer += node.inputDer;
+        node.numAccumulatedDers++;
+      }
+      for (let i = 0; i < currentLayer.length; i++) {
+        let node = currentLayer[i];
+        for (let j = 0; j < node.inputLinks.length; j++) {
+          let link = node.inputLinks[j];
+          if (link.isDead) {
+            continue;
+          }
+          link.errorDer = node.inputDer * link.source.output;
+          link.accErrorDer += link.errorDer;
+          link.numAccumulatedDers++;
         }
-        link.errorDer = node.inputDer * link.source.output;
-        link.accErrorDer += link.errorDer;
-        link.numAccumulatedDers++;
+      }
+      if (layerIdx === 1) {
+        continue;
+      }
+      let prevLayer = denseNet[layerIdx - 1];
+      for (let i = 0; i < prevLayer.length; i++) {
+        let node = prevLayer[i];
+        node.outputDer = 0;
+        for (let j = 0; j < node.outputs.length; j++) {
+          let output = node.outputs[j];
+          node.outputDer += output.weight * output.dest.inputDer;
+        }
       }
     }
-    if (layerIdx === 1) {
-      continue;
-    }
-    let prevLayer = network[layerIdx - 1];
-    for (let i = 0; i < prevLayer.length; i++) {
-      let node = prevLayer[i];
-      // Compute the error derivative with respect to each node's output.
-      node.outputDer = 0;
-      for (let j = 0; j < node.outputs.length; j++) {
-        let output = node.outputs[j];
-        node.outputDer += output.weight * output.dest.inputDer;
-      }
-    }
+    return;
+  }
+
+  // Convolutional / pooling network path.
+  let lastLayer: any = network[network.length - 1];
+  // Assume scalar output at [0][0][0].
+  let outputVal = lastLayer.output[0][0][0];
+  let grad: number[][][] = [[[errorFunc.der(outputVal, target)]]];
+  for (let layerIdx = network.length - 1; layerIdx >= 0; layerIdx--) {
+    let layer = network[layerIdx];
+    grad = layer.backward(grad);
   }
 }
 
@@ -332,46 +736,59 @@ export function backProp(network: Node[][], target: number,
  * Updates the weights of the network using the previously accumulated error
  * derivatives.
  */
-export function updateWeights(network: Node[][], learningRate: number,
+export function updateWeights(network: any[], learningRate: number,
     regularizationRate: number) {
-  for (let layerIdx = 1; layerIdx < network.length; layerIdx++) {
-    let currentLayer = network[layerIdx];
-    for (let i = 0; i < currentLayer.length; i++) {
-      let node = currentLayer[i];
-      // Update the node's bias.
-      if (node.numAccumulatedDers > 0) {
-        node.bias -= learningRate * node.accInputDer / node.numAccumulatedDers;
-        node.accInputDer = 0;
-        node.numAccumulatedDers = 0;
-      }
-      // Update the weights coming into this node.
-      for (let j = 0; j < node.inputLinks.length; j++) {
-        let link = node.inputLinks[j];
-        if (link.isDead) {
-          continue;
+  if (network.length === 0) {
+    return;
+  }
+
+  // Dense network path.
+  if (Array.isArray(network[0])) {
+    let denseNet = network as Node[][];
+    for (let layerIdx = 1; layerIdx < denseNet.length; layerIdx++) {
+      let currentLayer = denseNet[layerIdx];
+      for (let i = 0; i < currentLayer.length; i++) {
+        let node = currentLayer[i];
+        if (node.numAccumulatedDers > 0) {
+          node.bias -= learningRate * node.accInputDer / node.numAccumulatedDers;
+          node.accInputDer = 0;
+          node.numAccumulatedDers = 0;
         }
-        let regulDer = link.regularization ?
-            link.regularization.der(link.weight) : 0;
-        if (link.numAccumulatedDers > 0) {
-          // Update the weight based on dE/dw.
-          link.weight = link.weight -
-              (learningRate / link.numAccumulatedDers) * link.accErrorDer;
-          // Further update the weight based on regularization.
-          let newLinkWeight = link.weight -
-              (learningRate * regularizationRate) * regulDer;
-          if (link.regularization === RegularizationFunction.L1 &&
-              link.weight * newLinkWeight < 0) {
-            // The weight crossed 0 due to the regularization term. Set it to 0.
-            link.weight = 0;
-            link.isDead = true;
-          } else {
-            link.weight = newLinkWeight;
+        for (let j = 0; j < node.inputLinks.length; j++) {
+          let link = node.inputLinks[j];
+          if (link.isDead) {
+            continue;
           }
-          link.accErrorDer = 0;
-          link.numAccumulatedDers = 0;
+          let regulDer = link.regularization ?
+              link.regularization.der(link.weight) : 0;
+          if (link.numAccumulatedDers > 0) {
+            link.weight = link.weight -
+                (learningRate / link.numAccumulatedDers) * link.accErrorDer;
+            let newLinkWeight = link.weight -
+                (learningRate * regularizationRate) * regulDer;
+            if (link.regularization === RegularizationFunction.L1 &&
+                link.weight * newLinkWeight < 0) {
+              link.weight = 0;
+              link.isDead = true;
+            } else {
+              link.weight = newLinkWeight;
+            }
+            link.accErrorDer = 0;
+            link.numAccumulatedDers = 0;
+          }
         }
       }
     }
+    return;
+  }
+
+  // Convolutional / pooling network path.
+  for (let i = 0; i < network.length; i++) {
+    let layer = network[i];
+    if (layer instanceof ConvolutionLayer) {
+      layer.updateWeights(learningRate, regularizationRate);
+    }
+    // Pooling layers have no weights to update.
   }
 }
 
