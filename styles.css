@@ -992,3 +992,30 @@ footer .links a:hover {
 #main-part .mdl-slider.is-upgraded:focus:not(:active)::-webkit-slider-thumb {
   box-shadow: 0 0 0 10px rgba(0,0,0, 0.12);
 }
+
+/* Feature map panels */
+.feature-map-panel {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.feature-map-grid {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.feature-map {
+  margin: 4px;
+  text-align: center;
+}
+
+.feature-map canvas {
+  border: 1px solid #ccc;
+  image-rendering: pixelated;
+}
+
+.feature-map .caption {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
