@@ -250,8 +250,13 @@ export function buildNetwork(
  *     nodes in the network.
  * @return The final output of the network.
  */
+export interface ForwardResult {
+  prediction: number;
+  featureMaps: {[layer: number]: number[]};
+}
+
 export function forwardProp(network: Node[][], inputs: number[]):
-    {prediction: number, featureMaps: {[layer: number]: number[]}} {
+    ForwardResult {
   let inputLayer = network[0];
   if (inputs.length !== inputLayer.length) {
     throw new Error("The number of inputs must match the number of nodes in" +
@@ -265,12 +270,17 @@ export function forwardProp(network: Node[][], inputs: number[]):
   let featureMaps: {[layer: number]: number[]} = {};
   for (let layerIdx = 1; layerIdx < network.length; layerIdx++) {
     let currentLayer = network[layerIdx];
-    featureMaps[layerIdx] = [];
+    // Collect pre-activation values for hidden layers only.
+    if (layerIdx < network.length - 1) {
+      featureMaps[layerIdx - 1] = [];
+    }
     // Update all the nodes in this layer.
     for (let i = 0; i < currentLayer.length; i++) {
       let node = currentLayer[i];
       node.updateOutput();
-      featureMaps[layerIdx].push(node.totalInput);
+      if (layerIdx < network.length - 1) {
+        featureMaps[layerIdx - 1].push(node.totalInput);
+      }
     }
   }
   return {

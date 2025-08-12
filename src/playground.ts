@@ -911,8 +911,8 @@ function oneStep(): void {
   iter++;
   trainData.forEach((point, i) => {
     let input = constructInput(point.x, point.y);
-    let result = nn.forwardProp(network, input);
-    latestFeatureMaps = result.featureMaps;
+    let {featureMaps} = nn.forwardProp(network, input);
+    latestFeatureMaps = featureMaps;
     nn.backProp(network, point.label, nn.Errors.SQUARE);
     if ((i + 1) % state.batchSize === 0) {
       nn.updateWeights(network, state.learningRate, state.regularizationRate);
