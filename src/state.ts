@@ -48,6 +48,11 @@ export let regDatasets: {[key: string]: dataset.DataGenerator} = {
   "reg-gauss": dataset.regressGaussian
 };
 
+/** A map between names and functions that generate image data. */
+export let imageDatasets: {[key: string]: dataset.ImageDataGenerator} = {
+  "digits": dataset.generateImageData
+};
+
 export function getKeyFromValue(obj: any, value: any): string {
   for (let key in obj) {
     if (obj[key] === value) {
@@ -86,12 +91,14 @@ export enum Type {
 
 export enum Problem {
   CLASSIFICATION,
-  REGRESSION
+  REGRESSION,
+  IMAGE
 }
 
 export let problems = {
   "classification": Problem.CLASSIFICATION,
-  "regression": Problem.REGRESSION
+  "regression": Problem.REGRESSION,
+  "image": Problem.IMAGE
 };
 
 export interface Property {
@@ -109,6 +116,7 @@ export class State {
     {name: "batchSize", type: Type.NUMBER},
     {name: "dataset", type: Type.OBJECT, keyMap: datasets},
     {name: "regDataset", type: Type.OBJECT, keyMap: regDatasets},
+    {name: "imgDataset", type: Type.OBJECT, keyMap: imageDatasets},
     {name: "learningRate", type: Type.NUMBER},
     {name: "regularizationRate", type: Type.NUMBER},
     {name: "noise", type: Type.NUMBER},
@@ -162,6 +170,7 @@ export class State {
   sinY = false;
   dataset: dataset.DataGenerator = dataset.classifyCircleData;
   regDataset: dataset.DataGenerator = dataset.regressPlane;
+  imgDataset: dataset.ImageDataGenerator = dataset.generateImageData;
   seed: string;
 
   /**
