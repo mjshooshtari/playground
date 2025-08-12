@@ -25,7 +25,7 @@ import {
   getKeyFromValue,
   Problem
 } from "./state";
-import {Example2D, shuffle} from "./dataset";
+import {Example2D, ExampleImage, shuffle} from "./dataset";
 import {AppendingLineChart} from "./linechart";
 import * as d3 from 'd3';
 
@@ -166,8 +166,8 @@ let colorScale = d3.scale.linear<string, number>()
                      .range(["#f59322", "#e8eaeb", "#0877bd"])
                      .clamp(true);
 let iter = 0;
-let trainData: Example2D[] = [];
-let testData: Example2D[] = [];
+let trainData: Array<Example2D | ExampleImage> = [];
+let testData: Array<Example2D | ExampleImage> = [];
 let network: nn.Node[][] = null;
 let lossTrain = 0;
 let lossTest = 0;
@@ -268,7 +268,9 @@ function makeGUI() {
     state.showTestData = this.checked;
     state.serialize();
     userHasInteracted();
-    heatMap.updateTestPoints(state.showTestData ? testData : []);
+    if (state.problem !== Problem.IMAGE) {
+      heatMap.updateTestPoints(state.showTestData ? testData as Example2D[] : []);
+    }
   });
   // Check/uncheck the checkbox according to the current state.
   showTestData.property("checked", state.showTestData);
@@ -837,15 +839,19 @@ function updateDecisionBoundary(network: nn.Node[][], firstTime: boolean) {
   }
 }
 
-function getLoss(network: nn.Node[][], dataPoints: Example2D[]): number {
+function getLoss(network: nn.Node[][], dataPoints: Array<Example2D | ExampleImage>): number {
+  if (state.problem === Problem.IMAGE) {
+    return 0;
+  }
   let loss = 0;
-  for (let i = 0; i < dataPoints.length; i++) {
-    let dataPoint = dataPoints[i];
+  let points = dataPoints as Example2D[];
+  for (let i = 0; i < points.length; i++) {
+    let dataPoint = points[i];
     let input = constructInput(dataPoint.x, dataPoint.y);
     let output = nn.forwardProp(network, input);
     loss += nn.Errors.SQUARE.error(output, dataPoint.label);
   }
-  return loss / dataPoints.length;
+  return loss / points.length;
 }
 
 function updateUI(firstStep = false) {
@@ -907,8 +913,11 @@ function constructInput(x: number, y: number): number[] {
 }
 
 function oneStep(): void {
+  if (state.problem === Problem.IMAGE) {
+    return;
+  }
   iter++;
-  trainData.forEach((point, i) => {
+  (trainData as Example2D[]).forEach((point, i) => {
     let input = constructInput(point.x, point.y);
     nn.forwardProp(network, input);
     nn.backProp(network, point.label, nn.Errors.SQUARE);
@@ -944,6 +953,16 @@ function reset(onStartup=false) {
     userHasInteracted();
   }
   player.pause();
+
+  if (state.problem === Problem.IMAGE) {
+    iter = 0;
+    network = null;
+    lossTrain = 0;
+    lossTest = 0;
+    heatMap.updatePoints([]);
+    heatMap.updateTestPoints([]);
+    return;
+  }
 
   let suffix = state.numHiddenLayers !== 1 ? "s" : "";
   d3.select("#layers-label").text("Hidden layer" + suffix);
@@ -1074,6 +1093,16 @@ function generateData(firstTime = false) {
   Math.seedrandom(state.seed);
   let numSamples = (state.problem === Problem.REGRESSION) ?
       NUM_SAMPLES_REGRESS : NUM_SAMPLES_CLASSIFY;
+  if (state.problem === Problem.IMAGE) {
+    let data = state.imgDataset(numSamples, state.noise / 100);
+    shuffle(data);
+    let splitIndex = Math.floor(data.length * state.percTrainData / 100);
+    trainData = data.slice(0, splitIndex);
+    testData = data.slice(splitIndex);
+    heatMap.updatePoints([]);
+    heatMap.updateTestPoints([]);
+    return;
+  }
   let generator = state.problem === Problem.CLASSIFICATION ?
       state.dataset : state.regDataset;
   let data = generator(numSamples, state.noise / 100);
@@ -1083,8 +1112,8 @@ function generateData(firstTime = false) {
   let splitIndex = Math.floor(data.length * state.percTrainData / 100);
   trainData = data.slice(0, splitIndex);
   testData = data.slice(splitIndex);
-  heatMap.updatePoints(trainData);
-  heatMap.updateTestPoints(state.showTestData ? testData : []);
+  heatMap.updatePoints(trainData as Example2D[]);
+  heatMap.updateTestPoints(state.showTestData ? testData as Example2D[] : []);
 }
 
 let firstInteraction = true;

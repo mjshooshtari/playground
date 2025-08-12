@@ -15,12 +15,23 @@ limitations under the License.
 
 import * as d3 from 'd3';
 
+// Allow requiring JSON data without Node type definitions.
+declare const require: any;
+
 /**
  * A two dimensional example: x and y coordinates with the label.
  */
 export type Example2D = {
   x: number,
   y: number,
+  label: number
+};
+
+/**
+ * An image example consisting of a 2D array of pixel intensities and a label.
+ */
+export type ExampleImage = {
+  pixels: number[][],
   label: number
 };
 
@@ -51,6 +62,32 @@ export function shuffle(array: any[]): void {
 }
 
 export type DataGenerator = (numSamples: number, noise: number) => Example2D[];
+
+/** Generator type for image data. */
+export type ImageDataGenerator = (numSamples: number, noise: number) => ExampleImage[];
+
+// tslint:disable-next-line:no-var-requires
+const DIGITS: {[label: string]: number[][]} = require('./digits.json');
+
+/**
+ * Generates digit image data by loading bitmaps from a JSON file. Noise is
+ * added to each pixel from a normal distribution with the provided variance.
+ */
+export function generateImageData(numSamples: number, noise: number): ExampleImage[] {
+  let data: ExampleImage[] = [];
+  let keys = Object.keys(DIGITS);
+  for (let i = 0; i < numSamples; i++) {
+    let label = +keys[i % keys.length];
+    let base = DIGITS[label];
+    let pixels = base.map(row => row.map(v => {
+      if (noise === 0) { return v; }
+      let nv = v + normalRandom(0, noise);
+      return Math.min(1, Math.max(0, nv));
+    }));
+    data.push({pixels, label});
+  }
+  return data;
+}
 
 export function classifyTwoGaussData(numSamples: number, noise: number):
     Example2D[] {
