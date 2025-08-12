@@ -250,7 +250,8 @@ export function buildNetwork(
  *     nodes in the network.
  * @return The final output of the network.
  */
-export function forwardProp(network: Node[][], inputs: number[]): number {
+export function forwardProp(network: Node[][], inputs: number[]):
+    {prediction: number, featureMaps: {[layer: number]: number[]}} {
   let inputLayer = network[0];
   if (inputs.length !== inputLayer.length) {
     throw new Error("The number of inputs must match the number of nodes in" +
@@ -261,15 +262,21 @@ export function forwardProp(network: Node[][], inputs: number[]): number {
     let node = inputLayer[i];
     node.output = inputs[i];
   }
+  let featureMaps: {[layer: number]: number[]} = {};
   for (let layerIdx = 1; layerIdx < network.length; layerIdx++) {
     let currentLayer = network[layerIdx];
+    featureMaps[layerIdx] = [];
     // Update all the nodes in this layer.
     for (let i = 0; i < currentLayer.length; i++) {
       let node = currentLayer[i];
       node.updateOutput();
+      featureMaps[layerIdx].push(node.totalInput);
     }
   }
-  return network[network.length - 1][0].output;
+  return {
+    prediction: network[network.length - 1][0].output,
+    featureMaps: featureMaps
+  };
 }
 
 /**
