@@ -28,6 +28,7 @@ import {
 import {Example2D, shuffle} from "./dataset";
 import {AppendingLineChart} from "./linechart";
 import * as d3 from 'd3';
+import {FeatureMap} from "./featuremap";
 
 let mainWidth;
 
@@ -88,6 +89,9 @@ let HIDABLE_CONTROLS = [
   ["Noise level", "noise"],
   ["Batch size", "batchSize"],
   ["# of hidden layers", "numHiddenLayers"],
+  ["Filter size", "filterSize"],
+  ["# of filters", "numFilters"],
+  ["Pooling", "pooling"],
 ];
 
 class Player {
@@ -174,6 +178,13 @@ let lossTest = 0;
 let player = new Player();
 let lineChart = new AppendingLineChart(d3.select("#linechart"),
     ["#777", "black"]);
+let featureMap = new FeatureMap(d3.select("#featuremaps"));
+
+function forwardPropAndUpdate(network: nn.Node[][], input: number[]): number {
+  let output = nn.forwardProp(network, input);
+  featureMap.update(network);
+  return output;
+}
 
 function makeGUI() {
   d3.select("#reset-button").on("click", () => {
@@ -353,17 +364,38 @@ function makeGUI() {
   });
   regularRate.property("value", state.regularizationRate);
 
-  let problem = d3.select("#problem").on("change", function() {
-    state.problem = problems[this.value];
-    generateData();
-    drawDatasetThumbnails();
-    parametersChanged = true;
-    reset();
-  });
-  problem.property("value", getKeyFromValue(problems, state.problem));
+    let problem = d3.select("#problem").on("change", function() {
+      state.problem = problems[this.value];
+      generateData();
+      drawDatasetThumbnails();
+      parametersChanged = true;
+      reset();
+    });
+    problem.property("value", getKeyFromValue(problems, state.problem));
 
-  // Add scale to the gradient color map.
-  let x = d3.scale.linear().domain([-1, 1]).range([0, 144]);
+    let filterSize = d3.select("#filterSize").on("change", function() {
+      state.filterSize = +this.value;
+      parametersChanged = true;
+      reset();
+    });
+    filterSize.property("value", state.filterSize);
+
+    let numFilters = d3.select("#numFilters").on("change", function() {
+      state.numFilters = +this.value;
+      parametersChanged = true;
+      reset();
+    });
+    numFilters.property("value", state.numFilters);
+
+    let pooling = d3.select("#pooling").on("change", function() {
+      state.pooling = this.value;
+      parametersChanged = true;
+      reset();
+    });
+    pooling.property("value", state.pooling);
+
+    // Add scale to the gradient color map.
+    let x = d3.scale.linear().domain([-1, 1]).range([0, 144]);
   let xAxis = d3.svg.axis()
     .scale(x)
     .orient("bottom")
@@ -822,8 +854,8 @@ function updateDecisionBoundary(network: nn.Node[][], firstTime: boolean) {
       // 1 for points inside the circle, and 0 for points outside the circle.
       let x = xScale(i);
       let y = yScale(j);
-      let input = constructInput(x, y);
-      nn.forwardProp(network, input);
+        let input = constructInput(x, y);
+        forwardPropAndUpdate(network, input);
       nn.forEachNode(network, true, node => {
         boundary[node.id][i][j] = node.output;
       });
@@ -842,7 +874,7 @@ function getLoss(network: nn.Node[][], dataPoints: Example2D[]): number {
   for (let i = 0; i < dataPoints.length; i++) {
     let dataPoint = dataPoints[i];
     let input = constructInput(dataPoint.x, dataPoint.y);
-    let output = nn.forwardProp(network, input);
+      let output = forwardPropAndUpdate(network, input);
     loss += nn.Errors.SQUARE.error(output, dataPoint.label);
   }
   return loss / dataPoints.length;
@@ -909,8 +941,8 @@ function constructInput(x: number, y: number): number[] {
 function oneStep(): void {
   iter++;
   trainData.forEach((point, i) => {
-    let input = constructInput(point.x, point.y);
-    nn.forwardProp(network, input);
+      let input = constructInput(point.x, point.y);
+      forwardPropAndUpdate(network, input);
     nn.backProp(network, point.label, nn.Errors.SQUARE);
     if ((i + 1) % state.batchSize === 0) {
       nn.updateWeights(network, state.learningRate, state.regularizationRate);

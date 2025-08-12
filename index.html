@@ -128,17 +128,48 @@ limitations under the License.
           </select>
         </div>
       </div>
-      <div class="control ui-problem">
-        <label for="problem">Problem type</label>
-        <div class="select">
-          <select id="problem">
-            <option value="classification">Classification</option>
-            <option value="regression">Regression</option>
-          </select>
+        <div class="control ui-problem">
+          <label for="problem">Problem type</label>
+          <div class="select">
+            <select id="problem">
+              <option value="classification">Classification</option>
+              <option value="regression">Regression</option>
+            </select>
+          </div>
+        </div>
+        <div class="control ui-filterSize">
+          <label for="filterSize">Filter size</label>
+          <div class="select">
+            <select id="filterSize">
+              <option value="1">1×1</option>
+              <option value="3">3×3</option>
+              <option value="5">5×5</option>
+            </select>
+          </div>
+        </div>
+        <div class="control ui-numFilters">
+          <label for="numFilters"># Filters</label>
+          <div class="select">
+            <select id="numFilters">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="4">4</option>
+              <option value="8">8</option>
+            </select>
+          </div>
+        </div>
+        <div class="control ui-pooling">
+          <label for="pooling">Pooling</label>
+          <div class="select">
+            <select id="pooling">
+              <option value="none">None</option>
+              <option value="max">Max</option>
+              <option value="avg">Average</option>
+            </select>
+          </div>
         </div>
       </div>
     </div>
-  </div>
 
   <!-- Main Part -->
   <div id="main-part" class="l--page">
@@ -226,21 +257,22 @@ limitations under the License.
             This is the output from one <b>neuron</b>. Hover to see it larger.
           </div>
         </div>
-        <div class="callout weights">
-          <svg viewBox="0 0 30 30">
-            <defs>
-              <marker id="arrow" markerWidth="5" markerHeight="5" refx="5" refy="2.5" orient="auto" markerUnits="userSpaceOnUse">
-                <path d="M0,0 L5,2.5 L0,5 z"/>
-              </marker>
-            </defs>
-            <path d="M12,30C5,20 2,15 12,0" marker-end="url(#arrow)">
-          </svg>
-          <div class="label">
-            The outputs are mixed with varying <b>weights</b>, shown by the thickness of the lines.
+          <div class="callout weights">
+            <svg viewBox="0 0 30 30">
+              <defs>
+                <marker id="arrow" markerWidth="5" markerHeight="5" refx="5" refy="2.5" orient="auto" markerUnits="userSpaceOnUse">
+                  <path d="M0,0 L5,2.5 L0,5 z"/>
+                </marker>
+              </defs>
+              <path d="M12,30C5,20 2,15 12,0" marker-end="url(#arrow)">
+            </svg>
+            <div class="label">
+              The outputs are mixed with varying <b>weights</b>, shown by the thickness of the lines.
+            </div>
           </div>
+          <div id="featuremaps"></div>
         </div>
       </div>
-    </div>
 
     <!-- Hidden Layers Column -->
     <div class="column hidden-layers">

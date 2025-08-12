@@ -109,10 +109,13 @@ export class State {
     {name: "batchSize", type: Type.NUMBER},
     {name: "dataset", type: Type.OBJECT, keyMap: datasets},
     {name: "regDataset", type: Type.OBJECT, keyMap: regDatasets},
-    {name: "learningRate", type: Type.NUMBER},
-    {name: "regularizationRate", type: Type.NUMBER},
-    {name: "noise", type: Type.NUMBER},
-    {name: "networkShape", type: Type.ARRAY_NUMBER},
+      {name: "learningRate", type: Type.NUMBER},
+      {name: "regularizationRate", type: Type.NUMBER},
+      {name: "filterSize", type: Type.NUMBER},
+      {name: "numFilters", type: Type.NUMBER},
+      {name: "pooling", type: Type.STRING},
+      {name: "noise", type: Type.NUMBER},
+      {name: "networkShape", type: Type.ARRAY_NUMBER},
     {name: "seed", type: Type.STRING},
     {name: "showTestData", type: Type.BOOLEAN},
     {name: "discretize", type: Type.BOOLEAN},
@@ -136,6 +139,9 @@ export class State {
   [key: string]: any;
   learningRate = 0.03;
   regularizationRate = 0;
+  filterSize = 3;
+  numFilters = 1;
+  pooling = "none";
   showTestData = false;
   noise = 0;
   batchSize = 10;
